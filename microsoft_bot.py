@@ -25,15 +25,17 @@ TOKEN = os.getenv('TELEGRAM_TOKEN', '8972332186:AAFKZkeFmMDC7Tk0fnOJBMhFSj-XOt28
 EMAIL, PASSWORD, FIRST_NAME, LAST_NAME, SOLVE_AUDIO_CAPTCHA = range(5)
 
 class MicrosoftCreator:
-    def __init__(self):
+    def __init__(self, update_msg_func):
         self.playwright = None
         self.browser = None
         self.context = None
         self.page = None
+        self.update_status = update_msg_func
 
     async def start_session(self):
+        await self.update_status("🚀 جاري بدء تشغيل المتصفح...")
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+        self.browser = await self.playwright.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'])
         self.context = await self.browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
@@ -41,60 +43,48 @@ class MicrosoftCreator:
 
     async def fill_initial_info(self, email, password, first_name, last_name):
         try:
-            await self.page.goto("https://signup.live.com/signup", wait_until="networkidle", timeout=60000)
+            await self.update_status("🌐 جاري الدخول لصفحة التسجيل...")
+            await self.page.goto("https://signup.live.com/signup", wait_until="domcontentloaded", timeout=60000)
             
-            # محاولة العثور على حقل البريد بمحددات متعددة لضمان الاستقرار
-            email_selectors = ['input[name="MemberName"]', 'input[type="email"]', '#MemberName']
-            email_field = None
-            for selector in email_selectors:
-                try:
-                    email_field = await self.page.wait_for_selector(selector, timeout=15000)
-                    if email_field: break
-                except: continue
-            
-            if not email_field:
-                await self.page.screenshot(path="error_email_field.png")
-                raise Exception("لم يتم العثور على حقل البريد الإلكتروني. تم التقاط صورة للخطأ.")
-
+            await self.update_status("📧 جاري إدخال البريد الإلكتروني...")
+            email_field = await self.page.wait_for_selector('input[name="MemberName"]', timeout=20000)
             await email_field.fill(email)
             await self.page.click('input[type="submit"]')
-            await asyncio.sleep(3)
             
-            # إدخال كلمة المرور
-            password_field = await self.page.wait_for_selector('input[name="Password"]', timeout=15000)
+            await self.update_status("🔑 جاري إدخال كلمة المرور...")
+            password_field = await self.page.wait_for_selector('input[name="Password"]', timeout=20000)
             await password_field.fill(password)
             await self.page.click('input[type="submit"]')
-            await asyncio.sleep(3)
 
-            # إدخال الاسم
-            await self.page.wait_for_selector('input[name="FirstName"]', timeout=15000)
+            await self.update_status("👤 جاري إدخال الاسم...")
+            await self.page.wait_for_selector('input[name="FirstName"]', timeout=20000)
             await self.page.fill('input[name="FirstName"]', first_name)
             await self.page.fill('input[name="LastName"]', last_name)
             await self.page.click('input[type="submit"]')
-            await asyncio.sleep(3)
 
-            # اختيار المنطقة والتاريخ
-            await self.page.wait_for_selector('select[name="BirthMonth"]', timeout=15000)
+            await self.update_status("📅 جاري إدخال تاريخ الميلاد...")
+            await self.page.wait_for_selector('select[name="BirthMonth"]', timeout=20000)
             await self.page.select_option('select[name="BirthMonth"]', value="1")
             await self.page.fill('input[name="BirthDay"]', "01")
             await self.page.fill('input[name="BirthYear"]', "1995")
             await self.page.click('input[type="submit"]')
+            
+            await self.update_status("🛡️ جاري انتظار ظهور الكابتشا (قد يستغرق وقتاً)...")
             await asyncio.sleep(10)
         except Exception as e:
-            await self.page.screenshot(path="general_error.png")
+            await self.page.screenshot(path="error.png")
             raise e
 
     async def get_audio_captcha(self):
         try:
-            # انتظار ظهور إطار الكابتشا أولاً
-            await asyncio.sleep(5)
-            # البحث عن زر الكابتشا الصوتية
-            audio_btn = await self.page.wait_for_selector('button[aria-label="Get an audio challenge"]', timeout=20000)
+            # محاولة العثور على زر الكابتشا الصوتية
+            audio_btn = await self.page.wait_for_selector('button[aria-label="Get an audio challenge"]', timeout=30000)
             if audio_btn:
+                await self.update_status("🎙️ تم العثور على الكابتشا الصوتية، جاري التحميل...")
                 await audio_btn.click()
                 await asyncio.sleep(5)
                 
-                download_link = await self.page.wait_for_selector('a[href*="audio"]', timeout=10000)
+                download_link = await self.page.wait_for_selector('a[href*="audio"]', timeout=15000)
                 if download_link:
                     url = await download_link.get_attribute('href')
                     response = requests.get(url)
@@ -109,13 +99,13 @@ class MicrosoftCreator:
 
     async def complete_registration(self, solution):
         try:
-            input_field = await self.page.wait_for_selector('input[aria-label="Type the numbers you hear"]', timeout=10000)
+            await self.update_status("🔄 جاري إرسال الحل للموقع...")
+            input_field = await self.page.wait_for_selector('input[aria-label="Type the numbers you hear"]', timeout=15000)
             if input_field:
                 await input_field.fill(solution)
                 await self.page.click('button:has-text("Verify")')
-                await asyncio.sleep(8)
+                await asyncio.sleep(10)
                 
-                # تجاوز صفحة البقاء متصلاً
                 try:
                     yes_btn = await self.page.wait_for_selector('input[value="Yes"]', timeout=10000)
                     if yes_btn:
@@ -123,21 +113,18 @@ class MicrosoftCreator:
                         await asyncio.sleep(5)
                 except:
                     pass
-                
                 return True
         except Exception as e:
             logging.error(f"Completion Error: {e}")
-            await self.page.screenshot(path="completion_error.png")
+            await self.page.screenshot(path="final_error.png")
         return False
 
     async def close(self):
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
+        if self.browser: await self.browser.close()
+        if self.playwright: await self.playwright.stop()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحباً! البوت الآن أكثر استقراراً. استخدم /create للبدء.")
+    await update.message.reply_text("مرحباً! البوت الآن يرسل تحديثات مباشرة لحالة التنفيذ. استخدم /create للبدء.")
 
 async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أدخل البريد الإلكتروني:")
@@ -160,9 +147,15 @@ async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['last_name'] = update.message.text
-    await update.message.reply_text("جاري التنفيذ... (تم تحسين سرعة الاستجابة) ⏳")
+    status_msg = await update.message.reply_text("⏳ جاري البدء...")
     
-    creator = MicrosoftCreator()
+    async def update_status(text):
+        try:
+            await status_msg.edit_text(text)
+        except:
+            pass
+
+    creator = MicrosoftCreator(update_status)
     context.user_data['creator'] = creator
     
     try:
@@ -180,35 +173,30 @@ async def get_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_audio(audio=audio, caption="اسمع التسجيل وأرسل الأرقام.")
             return SOLVE_AUDIO_CAPTCHA
         else:
-            # إذا فشل العثور على الكابتشا الصوتية، نرسل صورة للشاشة لنعرف السبب
+            await update_status("❌ فشل الوصول للكابتشا الصوتية.")
             if os.path.exists("captcha_error.png"):
                 with open("captcha_error.png", "rb") as photo:
-                    await update.message.reply_photo(photo=photo, caption="لم أجد كابتشا صوتية، هذه صورة لما يظهر لي الآن.")
-            else:
-                await update.message.reply_text("فشل الوصول للكابتشا. يرجى المحاولة مرة أخرى.")
+                    await update.message.reply_photo(photo=photo, caption="صورة للخطأ عند محاولة جلب الكابتشا.")
             await creator.close()
             return ConversationHandler.END
             
     except Exception as e:
-        logging.error(f"Final Error: {e}")
-        error_file = "general_error.png" if os.path.exists("general_error.png") else "error_email_field.png"
-        if os.path.exists(error_file):
-            with open(error_file, "rb") as photo:
-                await update.message.reply_photo(photo=photo, caption=f"حدث خطأ: {e}")
-        else:
-            await update.message.reply_text(f"حدث خطأ: {e}")
+        await update_status(f"❌ حدث خطأ: {e}")
+        if os.path.exists("error.png"):
+            with open("error.png", "rb") as photo:
+                await update.message.reply_photo(photo=photo)
         await creator.close()
         return ConversationHandler.END
 
 async def handle_audio_solution(update: Update, context: ContextTypes.DEFAULT_TYPE):
     solution = update.message.text
     creator = context.user_data.get('creator')
-    await update.message.reply_text("جاري الإكمال... ⏳")
+    await update.message.reply_text("جاري إكمال الحساب... ⏳")
     success = await creator.complete_registration(solution)
     if success:
-        await update.message.reply_text(f"✅ تم بنجاح!\nالبريد: {context.user_data['email']}")
+        await update.message.reply_text(f"✅ تم إنشاء الحساب بنجاح!\n{context.user_data['email']}")
     else:
-        await update.message.reply_text("❌ فشل الإكمال.")
+        await update.message.reply_text("❌ فشل إكمال الحساب.")
     await creator.close()
     return ConversationHandler.END
 
