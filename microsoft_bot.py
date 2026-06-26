@@ -56,39 +56,46 @@ class MicrosoftCreator:
         await self.page.fill('input[name="BirthDay"]', "01")
         await self.page.fill('input[name="BirthYear"]', "1995")
         await self.page.click('input[type="submit"]')
-        await asyncio.sleep(5)
+        await asyncio.sleep(8) # وقت أطول لضمان تحميل الكابتشا
 
     async def get_audio_captcha(self):
-        # محاولة التبديل للكابتشا الصوتية
         try:
-            # البحث عن زر الكابتشا الصوتية (غالباً ما يكون أيقونة سماعة)
-            audio_btn = await self.page.query_selector('button[aria-label="Get an audio challenge"]')
+            # محاولة العثور على زر الكابتشا الصوتية
+            audio_btn = await self.page.wait_for_selector('button[aria-label="Get an audio challenge"]', timeout=10000)
             if audio_btn:
                 await audio_btn.click()
                 await asyncio.sleep(3)
                 
-                # البحث عن رابط تحميل الملف الصوتي
-                download_link = await self.page.query_selector('a[href*="audio"]')
+                download_link = await self.page.wait_for_selector('a[href*="audio"]', timeout=5000)
                 if download_link:
                     url = await download_link.get_attribute('href')
                     response = requests.get(url)
-                    with open("captcha_audio.wav", "wb") as f:
+                    path = "captcha_audio.wav"
+                    with open(path, "wb") as f:
                         f.write(response.content)
-                    return "captcha_audio.wav"
+                    return path
         except Exception as e:
-            logging.error(f"Audio Captcha Error: {e}")
+            logging.error(f"Audio Captcha Detection Error: {e}")
         return None
 
-    async def submit_audio_solution(self, solution):
+    async def complete_registration(self, solution):
         try:
+            # إدخال حل الكابتشا
             input_field = await self.page.query_selector('input[aria-label="Type the numbers you hear"]')
             if input_field:
                 await input_field.fill(solution)
                 await self.page.click('button:has-text("Verify")')
-                await asyncio.sleep(3)
+                await asyncio.sleep(5)
+                
+                # التعامل مع صفحة "Stay signed in?"
+                stay_signed_in = await self.page.query_selector('input[value="Yes"]')
+                if stay_signed_in:
+                    await stay_signed_in.click()
+                    await asyncio.sleep(3)
+                
                 return True
         except Exception as e:
-            logging.error(f"Submit Error: {e}")
+            logging.error(f"Completion Error: {e}")
         return False
 
     async def close(self):
@@ -98,10 +105,10 @@ class MicrosoftCreator:
             await self.playwright.stop()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحباً! سأرسل لك الكابتشا كـ Record لتسمعها وترسل لي الأرقام.")
+    await update.message.reply_text("مرحباً بك في بوت إنشاء حسابات Microsoft الشامل 🚀\nاستخدم /create للبدء.")
 
 async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أدخل البريد الإلكتروني:")
+    await update.message.reply_text("أدخل البريد الإلكتروني (example@outlook.com):")
     return EMAIL
 
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -121,7 +128,7 @@ async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['last_name'] = update.message.text
-    await update.message.reply_text("جاري تجهيز الكابتشا الصوتية... ⏳")
+    await update.message.reply_text("جاري تنفيذ المهمة بالكامل... يرجى الانتظار ⏳")
     
     creator = MicrosoftCreator()
     context.user_data['creator'] = creator
@@ -138,15 +145,16 @@ async def get_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         audio_path = await creator.get_audio_captcha()
         if audio_path:
             with open(audio_path, 'rb') as audio:
-                await update.message.reply_audio(audio=audio, caption="اسمع التسجيل وأرسل لي الأرقام التي سمعتها.")
+                await update.message.reply_audio(audio=audio, caption="اسمع التسجيل وأرسل لي الأرقام التي سمعتها لإكمال الحساب.")
             return SOLVE_AUDIO_CAPTCHA
         else:
-            await update.message.reply_text("لم أتمكن من العثور على كابتشا صوتية، قد تكون الصفحة تطلب كابتشا مرئية فقط حالياً.")
+            await update.message.reply_text("لم يتم العثور على كابتشا صوتية. قد تكون العملية قد اكتملت أو تطلب كابتشا مرئية.")
+            # محاولة التحقق إذا تم إنشاء الحساب بالفعل
             await creator.close()
             return ConversationHandler.END
             
     except Exception as e:
-        await update.message.reply_text(f"خطأ: {e}")
+        await update.message.reply_text(f"حدث خطأ أثناء التنفيذ: {e}")
         await creator.close()
         return ConversationHandler.END
 
@@ -154,13 +162,20 @@ async def handle_audio_solution(update: Update, context: ContextTypes.DEFAULT_TY
     solution = update.message.text
     creator = context.user_data.get('creator')
     
-    await update.message.reply_text("جاري التحقق من الحل... ⏳")
-    success = await creator.submit_audio_solution(solution)
+    await update.message.reply_text("جاري إكمال الخطوات النهائية... ⏳")
+    success = await creator.complete_registration(solution)
     
     if success:
-        await update.message.reply_text("✅ تم التحقق بنجاح! جاري إكمال إنشاء الحساب.")
+        email = context.user_data['email']
+        password = context.user_data['password']
+        await update.message.reply_text(
+            "✅ تم إنشاء الحساب بنجاح!\n\n"
+            f"📧 الحساب: {email}\n"
+            f"🔑 كلمة المرور: {password}\n"
+            "يمكنك الآن تسجيل الدخول واستخدامه."
+        )
     else:
-        await update.message.reply_text("❌ فشل التحقق، يرجى المحاولة مرة أخرى.")
+        await update.message.reply_text("❌ فشل إكمال العملية. قد يكون الحل غير صحيح أو انتهت صلاحية الجلسة.")
     
     await creator.close()
     return ConversationHandler.END
