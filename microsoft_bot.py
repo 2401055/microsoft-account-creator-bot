@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import os
-import random
-import string
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import requests
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -23,7 +22,7 @@ logging.basicConfig(
 TOKEN = os.getenv('TELEGRAM_TOKEN', '8972332186:AAFKZkeFmMDC7Tk0fnOJBMhFSj-XOt28CbU')
 
 # حالات المحادثة
-EMAIL, PASSWORD, FIRST_NAME, LAST_NAME, SOLVE_CAPTCHA = range(5)
+EMAIL, PASSWORD, FIRST_NAME, LAST_NAME, SOLVE_AUDIO_CAPTCHA = range(5)
 
 class MicrosoftCreator:
     def __init__(self):
@@ -40,39 +39,57 @@ class MicrosoftCreator:
 
     async def fill_initial_info(self, email, password, first_name, last_name):
         await self.page.goto("https://signup.live.com/signup")
-        # إدخال البريد
         await self.page.fill('input[name="MemberName"]', email)
         await self.page.click('input[type="submit"]')
         await asyncio.sleep(2)
         
-        # إدخال كلمة المرور
         await self.page.fill('input[name="Password"]', password)
         await self.page.click('input[type="submit"]')
         await asyncio.sleep(2)
 
-        # إدخال الاسم
         await self.page.fill('input[name="FirstName"]', first_name)
         await self.page.fill('input[name="LastName"]', last_name)
         await self.page.click('input[type="submit"]')
         await asyncio.sleep(2)
 
-        # اختيار المنطقة والتاريخ (قيم افتراضية)
         await self.page.select_option('select[name="BirthMonth"]', value="1")
         await self.page.fill('input[name="BirthDay"]', "01")
         await self.page.fill('input[name="BirthYear"]', "1995")
         await self.page.click('input[type="submit"]')
-        await asyncio.sleep(5) # انتظار تحميل الكابتشا
+        await asyncio.sleep(5)
 
-    async def get_captcha_screenshot(self):
-        # محاولة العثور على إطار الكابتشا وأخذ لقطة شاشة
-        captcha_frame = await self.page.query_selector('#enforcementFrame')
-        if captcha_frame:
-            await captcha_frame.screenshot(path="captcha.png")
-            return "captcha.png"
-        else:
-            # لقطة شاشة للصفحة كاملة إذا لم يتم العثور على الإطار المحدد
-            await self.page.screenshot(path="page_status.png")
-            return "page_status.png"
+    async def get_audio_captcha(self):
+        # محاولة التبديل للكابتشا الصوتية
+        try:
+            # البحث عن زر الكابتشا الصوتية (غالباً ما يكون أيقونة سماعة)
+            audio_btn = await self.page.query_selector('button[aria-label="Get an audio challenge"]')
+            if audio_btn:
+                await audio_btn.click()
+                await asyncio.sleep(3)
+                
+                # البحث عن رابط تحميل الملف الصوتي
+                download_link = await self.page.query_selector('a[href*="audio"]')
+                if download_link:
+                    url = await download_link.get_attribute('href')
+                    response = requests.get(url)
+                    with open("captcha_audio.wav", "wb") as f:
+                        f.write(response.content)
+                    return "captcha_audio.wav"
+        except Exception as e:
+            logging.error(f"Audio Captcha Error: {e}")
+        return None
+
+    async def submit_audio_solution(self, solution):
+        try:
+            input_field = await self.page.query_selector('input[aria-label="Type the numbers you hear"]')
+            if input_field:
+                await input_field.fill(solution)
+                await self.page.click('button:has-text("Verify")')
+                await asyncio.sleep(3)
+                return True
+        except Exception as e:
+            logging.error(f"Submit Error: {e}")
+        return False
 
     async def close(self):
         if self.browser:
@@ -81,14 +98,10 @@ class MicrosoftCreator:
             await self.playwright.stop()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "مرحباً! 🚀 سأقوم بمساعدتك في إنشاء حساب Microsoft.\n"
-        "عندما نصل لمرحلة الكابتشا، سأرسل لك الصورة لتقوم بحلها.\n\n"
-        "اضغط /create للبدء."
-    )
+    await update.message.reply_text("مرحباً! سأرسل لك الكابتشا كـ Record لتسمعها وترسل لي الأرقام.")
 
 async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أدخل البريد الإلكتروني المطلوب (example@outlook.com):")
+    await update.message.reply_text("أدخل البريد الإلكتروني:")
     return EMAIL
 
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,7 +111,7 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['password'] = update.message.text
-    await update.message.reply_text("أدخل اسمك الأول:")
+    await update.message.reply_text("أدخل الاسم الأول:")
     return FIRST_NAME
 
 async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,7 +121,7 @@ async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['last_name'] = update.message.text
-    await update.message.reply_text("جاري بدء الأتمتة... يرجى الانتظار قليلاً ⏳")
+    await update.message.reply_text("جاري تجهيز الكابتشا الصوتية... ⏳")
     
     creator = MicrosoftCreator()
     context.user_data['creator'] = creator
@@ -122,30 +135,34 @@ async def get_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['last_name']
         )
         
-        captcha_path = await creator.get_captcha_screenshot()
-        with open(captcha_path, 'rb') as photo:
-            await update.message.reply_photo(photo=photo, caption="لقد وصلنا لمرحلة الكابتشا! يرجى حلها في متصفحك أو إخباري إذا كنت تريد المتابعة.")
-        
-        await update.message.reply_text("ملاحظة: بما أن الكابتشا تفاعلية، يفضل أن تقوم بالخطوة النهائية يدوياً. سأقوم بتزويدك بالرابط المباشر للمتابعة.")
-        
+        audio_path = await creator.get_audio_captcha()
+        if audio_path:
+            with open(audio_path, 'rb') as audio:
+                await update.message.reply_audio(audio=audio, caption="اسمع التسجيل وأرسل لي الأرقام التي سمعتها.")
+            return SOLVE_AUDIO_CAPTCHA
+        else:
+            await update.message.reply_text("لم أتمكن من العثور على كابتشا صوتية، قد تكون الصفحة تطلب كابتشا مرئية فقط حالياً.")
+            await creator.close()
+            return ConversationHandler.END
+            
     except Exception as e:
-        logging.error(f"Error: {e}")
-        await update.message.reply_text(f"حدث خطأ: {str(e)}")
+        await update.message.reply_text(f"خطأ: {e}")
         await creator.close()
         return ConversationHandler.END
 
-    return SOLVE_CAPTCHA
-
-async def handle_captcha_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("تم استلام ردك. جاري محاولة الإكمال...")
-    # هنا يمكن إضافة منطق لإدخال حل الكابتشا إذا كانت نصية
-    # لكن كابتشا مايكروسوفت عادة ما تكون تفاعلية (Funcaptcha)
-    await update.message.reply_text("✅ تم إكمال الخطوات الأولية بنجاح!")
-    
+async def handle_audio_solution(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    solution = update.message.text
     creator = context.user_data.get('creator')
-    if creator:
-        await creator.close()
     
+    await update.message.reply_text("جاري التحقق من الحل... ⏳")
+    success = await creator.submit_audio_solution(solution)
+    
+    if success:
+        await update.message.reply_text("✅ تم التحقق بنجاح! جاري إكمال إنشاء الحساب.")
+    else:
+        await update.message.reply_text("❌ فشل التحقق، يرجى المحاولة مرة أخرى.")
+    
+    await creator.close()
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -165,7 +182,7 @@ if __name__ == '__main__':
             PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
             FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_first_name)],
             LAST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_last_name)],
-            SOLVE_CAPTCHA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_captcha_response)],
+            SOLVE_AUDIO_CAPTCHA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_audio_solution)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
