@@ -32,6 +32,21 @@ class MicrosoftCreator:
         self.page = None
         self.update_status = update_msg_func
 
+    async def safe_click(self, selector, timeout=30000):
+        """محاولة النقر بشكل آمن مع إعادة المحاولة"""
+        try:
+            btn = await self.page.wait_for_selector(selector, timeout=timeout)
+            await btn.click()
+            return True
+        except:
+            # محاولة بمحدد بديل لزر الإرسال في مايكروسوفت
+            try:
+                alt_btn = await self.page.wait_for_selector('#idSIButton9', timeout=5000)
+                await alt_btn.click()
+                return True
+            except:
+                return False
+
     async def start_session(self):
         await self.update_status("🚀 جاري بدء تشغيل المتصفح...")
         self.playwright = await async_playwright().start()
@@ -43,34 +58,40 @@ class MicrosoftCreator:
 
     async def fill_initial_info(self, email, password, first_name, last_name):
         try:
-            await self.update_status("🌐 جاري الدخول لصفحة التسجيل (قد يستغرق وقتاً)...")
+            await self.update_status("🌐 جاري الدخول لصفحة التسجيل...")
             await self.page.goto("https://signup.live.com/signup", wait_until="networkidle", timeout=90000)
             
-            await self.update_status("📧 جاري إدخال البيانات...")
-            # البحث عن حقل البريد بمهلة أطول ومحددات مرنة
-            email_field = await self.page.wait_for_selector('input[name="MemberName"], input[type="email"]', timeout=40000)
+            await self.update_status("📧 جاري إدخال البريد...")
+            email_field = await self.page.wait_for_selector('input[name="MemberName"]', timeout=40000)
             await email_field.fill(email)
-            await self.page.click('input[type="submit"]')
+            if not await self.safe_click('input[type="submit"]'):
+                raise Exception("فشل النقر على زر المتابعة بعد البريد.")
             
+            await self.update_status("🔑 جاري إدخال كلمة المرور...")
             password_field = await self.page.wait_for_selector('input[name="Password"]', timeout=30000)
             await password_field.fill(password)
-            await self.page.click('input[type="submit"]')
+            if not await self.safe_click('input[type="submit"]'):
+                raise Exception("فشل النقر على زر المتابعة بعد كلمة المرور.")
 
+            await self.update_status("👤 جاري إدخال الاسم...")
             await self.page.wait_for_selector('input[name="FirstName"]', timeout=30000)
             await self.page.fill('input[name="FirstName"]', first_name)
             await self.page.fill('input[name="LastName"]', last_name)
-            await self.page.click('input[type="submit"]')
+            if not await self.safe_click('input[type="submit"]'):
+                raise Exception("فشل النقر على زر المتابعة بعد الاسم.")
 
+            await self.update_status("📅 جاري إدخال تاريخ الميلاد...")
             await self.page.wait_for_selector('select[name="BirthMonth"]', timeout=30000)
             await self.page.select_option('select[name="BirthMonth"]', value="1")
             await self.page.fill('input[name="BirthDay"]', "01")
             await self.page.fill('input[name="BirthYear"]', "1995")
-            await self.page.click('input[type="submit"]')
+            if not await self.safe_click('input[type="submit"]'):
+                raise Exception("فشل النقر على زر المتابعة بعد التاريخ.")
             
             await self.update_status("🛡️ جاري انتظار الكابتشا...")
             await asyncio.sleep(15)
         except Exception as e:
-            await self.page.screenshot(path="debug_error.png")
+            await self.page.screenshot(path="click_error.png")
             raise e
 
     async def get_audio_captcha(self):
@@ -89,7 +110,6 @@ class MicrosoftCreator:
                     return path
         except Exception as e:
             await self.page.screenshot(path="captcha_debug.png")
-            logging.error(f"Audio Captcha Error: {e}")
         return None
 
     async def complete_registration(self, solution):
@@ -98,7 +118,7 @@ class MicrosoftCreator:
             input_field = await self.page.wait_for_selector('input[aria-label="Type the numbers you hear"]', timeout=20000)
             if input_field:
                 await input_field.fill(solution)
-                await self.page.click('button:has-text("Verify")')
+                await self.safe_click('button:has-text("Verify")')
                 await asyncio.sleep(15)
                 try:
                     yes_btn = await self.page.wait_for_selector('input[value="Yes"]', timeout=15000)
@@ -107,7 +127,6 @@ class MicrosoftCreator:
                 return True
         except Exception as e:
             await self.page.screenshot(path="final_debug.png")
-            logging.error(f"Completion Error: {e}")
         return False
 
     async def close(self):
@@ -115,7 +134,7 @@ class MicrosoftCreator:
         if self.playwright: await self.playwright.stop()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحباً! تم تحسين البوت وإضافة أدوات تشخيص. استخدم /create للبدء.")
+    await update.message.reply_text("مرحباً! تم تحسين أزرار النقر في البوت. استخدم /create للبدء.")
 
 async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أدخل البريد الإلكتروني:")
@@ -159,14 +178,14 @@ async def get_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update_status("❌ لم يتم العثور على كابتشا صوتية.")
             if os.path.exists("captcha_debug.png"):
                 with open("captcha_debug.png", "rb") as photo:
-                    await update.message.reply_photo(photo=photo, caption="صورة توضح ما يراه البوت عند محاولة جلب الكابتشا.")
+                    await update.message.reply_photo(photo=photo, caption="صورة توضح ما يراه البوت عند الكابتشا.")
             await creator.close()
             return ConversationHandler.END
     except Exception as e:
         await update_status(f"❌ خطأ: {e}")
-        if os.path.exists("debug_error.png"):
-            with open("debug_error.png", "rb") as photo:
-                await update.message.reply_photo(photo=photo, caption="صورة تشخيصية للخطأ.")
+        if os.path.exists("click_error.png"):
+            with open("click_error.png", "rb") as photo:
+                await update.message.reply_photo(photo=photo, caption="صورة تشخيصية لخطأ النقر.")
         await creator.close()
         return ConversationHandler.END
 
@@ -176,11 +195,7 @@ async def handle_audio_solution(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("جاري إكمال الحساب... ⏳")
     success = await creator.complete_registration(solution)
     if success: await update.message.reply_text(f"✅ تم إنشاء الحساب بنجاح!\n{context.user_data['email']}")
-    else:
-        await update.message.reply_text("❌ فشل إكمال الحساب.")
-        if os.path.exists("final_debug.png"):
-            with open("final_debug.png", "rb") as photo:
-                await update.message.reply_photo(photo=photo, caption="صورة تشخيصية للفشل النهائي.")
+    else: await update.message.reply_text("❌ فشل إكمال الحساب.")
     await creator.close()
     return ConversationHandler.END
 
