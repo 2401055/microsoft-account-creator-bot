@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import json
 import requests
 from telegram import Update
 from telegram.ext import (
@@ -21,7 +20,6 @@ logging.basicConfig(
 )
 
 TOKEN = os.getenv('TELEGRAM_TOKEN', '8972332186:AAFKZkeFmMDC7Tk0fnOJBMhFSj-XOt28CbU')
-SESSION_FILE = "storage_state.json"
 
 # حالات المحادثة
 EMAIL, PASSWORD, FIRST_NAME, LAST_NAME, SOLVE_AUDIO_CAPTCHA = range(5)
@@ -38,16 +36,9 @@ class MicrosoftCreator:
         await self.update_status("🚀 جاري بدء تشغيل المتصفح...")
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-        
-        # استخدام ملف الجلسة إذا كان موجوداً
-        if os.path.exists(SESSION_FILE):
-            await self.update_status("🍪 تم العثور على ملف الجلسة، جاري التحميل...")
-            self.context = await self.browser.new_context(storage_state=SESSION_FILE)
-        else:
-            self.context = await self.browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            )
-        
+        self.context = await self.browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
         self.page = await self.context.new_page()
 
     async def fill_initial_info(self, email, password, first_name, last_name):
@@ -75,7 +66,7 @@ class MicrosoftCreator:
             await self.page.fill('input[name="BirthYear"]', "1995")
             await self.page.click('input[type="submit"]')
             
-            await self.update_status("🛡️ جاري انتظار الكابتشا...")
+            await self.update_status("🛡️ جاري انتظار ظهور الكابتشا...")
             await asyncio.sleep(10)
         except Exception as e:
             await self.page.screenshot(path="error.png")
@@ -102,6 +93,7 @@ class MicrosoftCreator:
 
     async def complete_registration(self, solution):
         try:
+            await self.update_status("🔄 جاري إرسال الحل للموقع...")
             input_field = await self.page.wait_for_selector('input[aria-label="Type the numbers you hear"]', timeout=15000)
             if input_field:
                 await input_field.fill(solution)
@@ -121,19 +113,7 @@ class MicrosoftCreator:
         if self.playwright: await self.playwright.stop()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "مرحباً! يمكنك الآن إرسال ملف `storage_state.json` لتحديث الجلسة.\n"
-        "استخدم /create للبدء في إنشاء حساب."
-    )
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc = update.message.document
-    if doc.file_name == "storage_state.json":
-        file = await context.bot.get_file(doc.file_id)
-        await file.download_to_drive(SESSION_FILE)
-        await update.message.reply_text("✅ تم تحديث ملف الجلسة بنجاح! سيستخدم البوت هذا الملف الآن.")
-    else:
-        await update.message.reply_text("❌ يرجى إرسال ملف باسم `storage_state.json` حصراً.")
+    await update.message.reply_text("مرحباً بك! استخدم /create للبدء في إنشاء حساب Microsoft.")
 
 async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أدخل البريد الإلكتروني:")
@@ -187,8 +167,8 @@ async def handle_audio_solution(update: Update, context: ContextTypes.DEFAULT_TY
     creator = context.user_data.get('creator')
     await update.message.reply_text("جاري الإكمال... ⏳")
     success = await creator.complete_registration(solution)
-    if success: await update.message.reply_text(f"✅ تم إنشاء الحساب!\n{context.user_data['email']}")
-    else: await update.message.reply_text("❌ فشل الإكمال.")
+    if success: await update.message.reply_text(f"✅ تم إنشاء الحساب بنجاح!\n{context.user_data['email']}")
+    else: await update.message.reply_text("❌ فشل إكمال الحساب.")
     await creator.close()
     return ConversationHandler.END
 
@@ -212,6 +192,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel)],
     )
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(conv_handler)
     application.run_polling()
